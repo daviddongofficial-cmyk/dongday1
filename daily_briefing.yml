@@ -1,0 +1,102 @@
+import os, json, datetime, requests
+
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+SERVERCHAN_KEY = os.environ["SERVERCHAN_KEY"]
+GEMINI_MODEL   = "gemini-2.0-flash"
+GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+
+def build_prompt(today):
+    return (
+        f"今天是 {today}（北京时间）。
+
+"
+        "你是一名信用卡行业资深分析师。请搜索过去24小时内以下主题的全网最新信息：
+"
+        "- 平安信用卡分期 最新政策/产品动态
+"
+        "- 平安银行信用卡 业务/合作公告
+"
+        "- 央行/银保监 信用卡监管政策
+"
+        "- 信用卡分期费率透明化、提前还款新进展
+"
+        "- 行业竞品动态（招行/建行/工行/浦发等）
+"
+        "- 金融科技与信用卡分期产品创新
+
+"
+        "请严格按以下 Markdown 格式输出，不要添加任何额外说明：
+
+"
+        "---
+
+"
+        f"## 平安信用卡分期每日简报
+**{today}**
+
+"
+        "### 政策利好
+（监管动向。若无重大动态请写：今日暂无重大政策动态）
+
+"
+        "### 平安业务动向
+（产品更新、合作公告。若无请写：今日暂无重大业务公告）
+
+"
+        "### 商业洞察
+（行业竞争动态、用户舆情、市场信号，2-3条）
+
+"
+        "### 创新方向
+（金融科技新动向、他行可借鉴的产品创新，2-3条）
+
+"
+        "### 今日速览
+（最值得关注的3条单句要点）
+
+"
+        "---
+"
+        f"数据来源：Google Search 实时检索 | 由 Gemini AI 整理 · {today}"
+    )
+
+def generate_briefing(today):
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": build_prompt(today)}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 2048}
+    }
+    print("正在调用 Gemini API（Google Search 联网）...")
+    resp = requests.post(GEMINI_URL, headers={"Content-Type": "application/json"}, json=payload, timeout=120)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Gemini 错误 {resp.status_code}: {resp.text[:300]}")
+    data = resp.json()
+    parts = data["candidates"][0]["content"]["parts"]
+    text = "".join(p.get("text", "") for p in parts).strip()
+    if not text:
+        raise ValueError("Gemini 返回内容为空")
+    return text
+
+def push_to_wechat(title, content):
+    url = f"https://sctapi.ftqq.com/{SERVERCHAN_KEY}.send"
+    resp = requests.post(url, data={"title": title, "desp": content}, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+    code = result.get("data", {}).get("errno", result.get("code", -1))
+    if code == 0:
+        print("微信推送成功！")
+    else:
+        raise RuntimeError(f"Server酱失败: {result}")
+
+def main():
+    beijing_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    weekday_cn  = ["周一","周二","周三","周四","周五","周六","周日"][beijing_now.weekday()]
+    today       = beijing_now.strftime("%Y年%m月%d日") + " " + weekday_cn
+    print(f"生成日期: {today}")
+    briefing = generate_briefing(today)
+    print(f"字符数: {len(briefing)}")
+    push_to_wechat(f"平安信用卡简报 · {today}", briefing)
+    print(briefing)
+
+if __name__ == "__main__":
+    main()
